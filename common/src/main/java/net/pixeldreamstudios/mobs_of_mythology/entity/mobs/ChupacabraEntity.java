@@ -12,6 +12,9 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.*;
+import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
+import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.Monster;
@@ -54,17 +57,18 @@ public class ChupacabraEntity extends AbstractMythMonsterEntity implements GeoEn
                 .add(Attributes.MOVEMENT_SPEED, 0.3);
     }
 
-//    @Override
-//    protected void registerGoals() {
-//        this.goalSelector.addGoal(0, new FloatGoal(this));
-//        this.goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.5f, true));
-//        this.goalSelector.addGoal(2, new WaterAvoidingRandomStrollGoal(this, 0.75f));
-//        this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, Player.class, 6.0f));
-//        this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
-//        this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
-//        this.targetSelector.addGoal(4, new NearestAttackableTargetGoal(this, Animal.class, false));
-//        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Player.class, true));
-//    }
+    @Override
+    protected void registerGoals() {
+        this.goalSelector.addGoal(0, new FloatGoal(this));
+        this.goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.5f, true));
+        this.goalSelector.addGoal(2, new WaterAvoidingRandomStrollGoal(this, 0.75f));
+        this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, Player.class, 6.0f));
+        this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
+        this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
+        this.targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, Player.class, true));
+        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Animal.class, false));
+
+    }
 
     @Override
     public List<ExtendedSensor<AbstractMythMonsterEntity>> getSensors() {
@@ -82,7 +86,7 @@ public class ChupacabraEntity extends AbstractMythMonsterEntity implements GeoEn
                         .invalidateIf((target, entity) -> !target.isAlive() || !entity.hasLineOfSight(target)),
                 new SetWalkTargetToAttackTarget<>()
                         .speedMod((mob, livingEntity) -> 1.25f)
-                        .startCondition(mob -> BrainUtils.getTargetOfEntity(this) instanceof Animal),
+                        .startCondition(mob -> mob.getTarget() != null && mob.getTarget().isAlive()),
                 new FleeTarget<>()
                         .speedModifier(1.75f)
                         .startCondition(pathfinderMob -> BrainUtils.getTargetOfEntity(this) instanceof Player || BrainUtils.getLastAttacker(this) instanceof Player || unreachableTarget)
