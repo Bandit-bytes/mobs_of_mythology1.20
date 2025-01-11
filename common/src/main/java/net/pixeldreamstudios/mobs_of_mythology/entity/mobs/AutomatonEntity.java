@@ -20,16 +20,14 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.AgeableMob;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.*;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -40,10 +38,15 @@ import net.pixeldreamstudios.mobs_of_mythology.entity.constant.DefaultMythAnimat
 import net.pixeldreamstudios.mobs_of_mythology.registry.ItemRegistry;
 import net.pixeldreamstudios.mobs_of_mythology.registry.SoundRegistry;
 import net.tslat.smartbrainlib.api.core.navigation.SmoothGroundNavigation;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class AutomatonEntity extends TamableAnimal implements GeoEntity {
+import java.util.UUID;
+
+public class AutomatonEntity extends TamableAnimal implements GeoEntity, NeutralMob {
     private final AnimatableInstanceCache cache = AzureLibUtil.createInstanceCache(this);
+    private int remainingAngerTime;
+    private UUID persistentAngerTarget;
 
     public AutomatonEntity(EntityType<? extends TamableAnimal> entityType, Level level) {
         super(entityType, level);
@@ -75,16 +78,17 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
     protected void registerGoals() {
         this.goalSelector.addGoal(1, new FloatGoal(this));
         this.goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.0, true));
-        this.goalSelector.addGoal(3, new SitWhenOrderedToGoal(this));
-        this.goalSelector.addGoal(4, new FollowOwnerGoal(this, 1.0, 10.0F, 2.0F, false));
+        this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.2, 8.0F, 2.0F, false));
+        this.goalSelector.addGoal(4, new SitWhenOrderedToGoal(this));
         this.goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, 1.0));
         this.goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
-        this.goalSelector.addGoal(6, new RandomLookAroundGoal(this));
+        this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
+
         this.targetSelector.addGoal(1, new OwnerHurtByTargetGoal(this));
         this.targetSelector.addGoal(2, new OwnerHurtTargetGoal(this));
-        this.targetSelector.addGoal(3, (new HurtByTargetGoal(this, new Class[0])).setAlertOthers(new Class[0]));
-        this.targetSelector.addGoal(4, new NearestAttackableTargetGoal(this, Monster.class, false));
-        this.targetSelector.addGoal(5, new ResetUniversalAngerTargetGoal(this, true));
+        this.targetSelector.addGoal(3, new HurtByTargetGoal(this).setAlertOthers());
+        this.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(this, Monster.class, false));
+        this.targetSelector.addGoal(5, new ResetUniversalAngerTargetGoal<>(this, true));
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -110,25 +114,50 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
             }
         }
     }
-
     @Override
     public void tick() {
         super.tick();
-        if (getHealth() < (double) 50) {
-            if (getHealth() < (double) 25) {
-                if (level().isClientSide()) {
-                    produceParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE);
+        if (!this.level().isClientSide) {
+            if (this.remainingAngerTime > 0) {
+                this.remainingAngerTime--;
+                if (this.remainingAngerTime == 0) {
+                    this.setPersistentAngerTarget(null);
+                    this.setTarget(null);
                 }
-                return;
             }
-            if (level().isClientSide()) {
-                produceParticles(ParticleTypes.SMOKE);
+        }
+        if (this.isTame() && this.getOwner() != null && !this.isOrderedToSit()) {
+            double distanceSq = this.distanceToSqr(this.getOwner());
+            if (distanceSq > 144.0D) {
+                this.teleportToOwner();
+            }
+        }
+
+        if (getHealth() < 50) {
+            produceParticles(getHealth() < 25 ? ParticleTypes.CAMPFIRE_COSY_SMOKE : ParticleTypes.SMOKE);
+        }
+    }
+    private void teleportToOwner() {
+        LivingEntity owner = this.getOwner();
+        if (owner != null) {
+            BlockPos ownerPos = owner.blockPosition();
+            for (int i = 0; i < 10; ++i) {
+                int offsetX = this.random.nextInt(7) - 3;
+                int offsetY = this.random.nextInt(3) - 1;
+                int offsetZ = this.random.nextInt(7) - 3;
+
+                BlockPos teleportPos = ownerPos.offset(offsetX, offsetY, offsetZ);
+                if (this.level().noCollision(this, this.getBoundingBox().move(teleportPos.subtract(this.blockPosition())))) {
+                    this.teleportTo(teleportPos.getX() + 0.5, teleportPos.getY(), teleportPos.getZ() + 0.5);
+                    this.navigation.recomputePath();
+                    break;
+                }
             }
         }
     }
 
     @Override
-    public InteractionResult mobInteract(Player player, InteractionHand interactionHand) {
+    public @NotNull InteractionResult mobInteract(Player player, InteractionHand interactionHand) {
         ItemStack itemStack = player.getItemInHand(interactionHand);
         Item item = itemStack.getItem();
         if (((Level)this.level()).isClientSide) {
@@ -138,12 +167,16 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
         if (this.isTame()) {
             InteractionResult interactionResult;
             if (this.isFood(itemStack) && this.getHealth() < this.getMaxHealth()) {
-                if (!player.getAbilities().instabuild) {
-                    itemStack.shrink(1);
+                FoodProperties foodProperties = item.getFoodProperties();
+                if (foodProperties != null) {
+                    if (!player.getAbilities().instabuild) {
+                        itemStack.shrink(1);
+                    }
+                    this.heal(2.0f * foodProperties.getNutrition());
+                    return InteractionResult.SUCCESS;
                 }
-                this.heal(2.0f * item.getFoodProperties().getNutrition());
-                return InteractionResult.SUCCESS;
             }
+
             if ((interactionResult = super.mobInteract(player, interactionHand)).consumesAction() && !this.isBaby() || !this.isOwnedBy(player)) return interactionResult;
             this.playSound(SoundRegistry.ROBOTIC_VOICE.get(), 1.0f, 1.0f);
             if (getServer() != null) {
@@ -151,7 +184,7 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
             }
             this.setOrderedToSit(!this.isOrderedToSit());
             this.jumping = false;
-            this.navigation.stop();
+            this.navigation.recomputePath();
             this.setTarget(null);
             return InteractionResult.SUCCESS;
         }
@@ -161,7 +194,7 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
         }
         if (this.random.nextInt(3) == 0) {
             this.tame(player);
-            this.navigation.stop();
+            this.navigation.recomputePath();
             this.setTarget(null);
             this.setOrderedToSit(true);
             this.playSound(SoundRegistry.ROBOTIC_VOICE.get(), 1.0f, 1.0f);
@@ -194,6 +227,19 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
             return PlayState.STOP;
         }).triggerableAnim("attack", DefaultMythAnimations.ATTACK).triggerableAnim("attack2", DefaultMythAnimations.ATTACK2));
     }
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        if (source.getEntity() instanceof LivingEntity attacker) {
+            if (this.isTame() && this.isOwnedBy(attacker)) {
+                return super.hurt(source, amount);
+            }
+            this.setOrderedToSit(false);
+            this.setPersistentAngerTarget(attacker.getUUID());
+            this.startPersistentAngerTimer();
+            this.setTarget(attacker);
+        }
+        return super.hurt(source, amount);
+    }
 
     @Override
     public boolean doHurtTarget(Entity entity) {
@@ -201,7 +247,10 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
         this.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 30, 255, true, true, true));
         return super.doHurtTarget(entity);
     }
-
+    public void tame(Player player) {
+        this.setTame(true);
+        this.setOwnerUUID(player.getUUID());
+    }
     @Override
     protected SoundEvent getHurtSound(DamageSource source) {
         return SoundEvents.IRON_GOLEM_HURT;
@@ -225,5 +274,35 @@ public class AutomatonEntity extends TamableAnimal implements GeoEntity {
     @Override
     public AnimatableInstanceCache getAnimatableInstanceCache() {
         return cache;
+    }
+
+    @Override
+    public int getRemainingPersistentAngerTime() {
+        return this.remainingAngerTime;
+    }
+
+    @Override
+    public void setRemainingPersistentAngerTime(int time) {
+        this.remainingAngerTime = time;
+    }
+
+    @Nullable
+    @Override
+    public UUID getPersistentAngerTarget() {
+        return this.persistentAngerTarget;
+    }
+
+    @Override
+    public void setPersistentAngerTarget(@Nullable UUID target) {
+        this.persistentAngerTarget = target;
+    }
+
+    @Override
+    public void startPersistentAngerTimer() {
+        this.remainingAngerTime = 600;
+    }
+    @Override
+    public boolean canAttack(LivingEntity livingEntity) {
+        return !this.isOwnedBy(livingEntity) && super.canAttack(livingEntity);
     }
 }
